@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"os"
 	"testing"
+	"time"
 )
 
 func TestPrefetchImages(t *testing.T) {
@@ -23,8 +24,10 @@ func TestPrefetchImages(t *testing.T) {
 	jobs = 2
 	_ = os.Mkdir(fp, 0755)
 	prefetchImages("./pics", "./prefetch", "80")
+	// sleep 2 seconds to make sure all the processes have exited
+	time.Sleep(2 * time.Second)
 	count = fileCount("./prefetch")
-	assert.Equal(t, 6, count)
+	assert.Equal(t, 8, count)
 	_ = os.RemoveAll(fp)
 }
 
