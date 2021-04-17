@@ -32,9 +32,9 @@ func prefetchImages(confImgPath string, ExhaustPath string, QUALITY string) {
 			// RawImagePath string, ImgFilename string, reqURI string
 			proposedURI := strings.Replace(picAbsPath, confImgPath, "", 1)
 			_, p2 := genWebpAbs(picAbsPath, ExhaustPath, info.Name(), proposedURI)
-			q, _ := strconv.ParseFloat(QUALITY, 32)
+			q, _ := strconv.Atoi(QUALITY)
 			_ = os.MkdirAll(path.Dir(p2), 0755)
-			go webpEncoder(picAbsPath, p2, float32(q), false, finishChan)
+			go webpEncoder(picAbsPath, p2, q, false, finishChan)
 			count += <-finishChan
 			//progress bar
 			_, _ = fmt.Fprintf(os.Stdout, "[Webp Server started] - convert in progress: %d/%d\r", count, all)

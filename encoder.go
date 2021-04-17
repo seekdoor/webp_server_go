@@ -8,20 +8,23 @@ import (
 	"image/jpeg"
 	"image/png"
 	"io/ioutil"
+	"os"
 	"path"
 	"strings"
+)
 
+import (
+	"github.com/bep/gowebp/libwebp"
+	"github.com/bep/gowebp/libwebp/webpoptions"
 	log "github.com/sirupsen/logrus"
-
-	"github.com/chai2010/webp"
 	"golang.org/x/image/bmp"
 )
 
-func webpEncoder(p1, p2 string, quality float32, Log bool, c chan int) (err error) {
+func webpEncoder(p1, p2 string, quality int, Log bool, c chan int) (err error) {
 	// if convert fails, return error; success nil
 
-	log.Debugf("target: %s with quality of %f", path.Base(p1), quality)
-	var buf bytes.Buffer
+	log.Debugf("target: %s with quality of %d", path.Base(p1), quality)
+	//var buf bytes.Buffer
 	var img image.Image
 
 	data, err := ioutil.ReadFile(p1)
@@ -51,12 +54,18 @@ func webpEncoder(p1, p2 string, quality float32, Log bool, c chan int) (err erro
 		return
 	}
 
-	if err = webp.Encode(&buf, img, &webp.Options{Lossless: false, Quality: quality}); err != nil {
-		log.Error(err)
-		chanErr(c)
-		return
+	//
+	output, err := os.Create(p2)
+	if err != nil {
+		log.Fatal(err)
 	}
-	if err = ioutil.WriteFile(p2, buf.Bytes(), 0644); err != nil {
+	defer output.Close()
+
+	options := webpoptions.EncodingOptions{
+		Quality:        quality,
+		EncodingPreset: webpoptions.EncodingPresetDefault,
+	}
+	if err = libwebp.Encode(output, img, options); err != nil {
 		log.Error(err)
 		chanErr(c)
 		return
