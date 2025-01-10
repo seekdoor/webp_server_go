@@ -1,0 +1,8 @@
+.github/*
+exhaust/*
+remote-raw/*
+scripts/*
+.git
+.dockerignore
+README.md
+LICENSE
