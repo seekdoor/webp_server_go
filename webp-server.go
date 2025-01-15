@@ -1,119 +1,126 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
-	"regexp"
 	"runtime"
+	"webp_server_go/config"
+	"webp_server_go/encoder"
+	"webp_server_go/handler"
+	schedule "webp_server_go/schedule"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/etag"
 	"github.com/gofiber/fiber/v2/middleware/logger"
+	"github.com/gofiber/fiber/v2/middleware/recover"
 	log "github.com/sirupsen/logrus"
 )
 
-func loadConfig(path string) Config {
-	jsonObject, err := os.Open(path)
-	if err != nil {
-		log.Fatal(err)
-	}
-	decoder := json.NewDecoder(jsonObject)
-	_ = decoder.Decode(&config)
-	_ = jsonObject.Close()
-	return config
-}
+// https://docs.gofiber.io/api/fiber
+var app = fiber.New(fiber.Config{
+	ServerHeader:          "WebP Server Go",
+	AppName:               "WebP Server Go",
+	DisableStartupMessage: true,
+	ProxyHeader:           "X-Real-IP",
+	ReadBufferSize:        config.Config.ReadBufferSize,   // per-connection buffer size for requests' reading. This also limits the maximum header size. Increase this buffer if your clients send multi-KB RequestURIs and/or multi-KB headers (for example, BIG cookies).
+	Concurrency:           config.Config.Concurrency,      // Maximum number of concurrent connections.
+	DisableKeepalive:      config.Config.DisableKeepalive, // Disable keep-alive connections, the server will close incoming connections after sending the first response to the client
+})
 
-func deferInit() {
-	flag.StringVar(&configPath, "config", "config.json", "/path/to/config.json. (Default: ./config.json)")
-	flag.BoolVar(&prefetch, "prefetch", false, "Prefetch and convert image to webp")
-	flag.IntVar(&jobs, "jobs", runtime.NumCPU(), "Prefetch thread, default is all.")
-	flag.BoolVar(&dumpConfig, "dump-config", false, "Print sample config.json")
-	flag.BoolVar(&dumpSystemd, "dump-systemd", false, "Print sample systemd service file.")
-	flag.BoolVar(&verboseMode, "v", false, "Verbose, print out debug info.")
-	flag.BoolVar(&showVersion, "V", false, "Show version information.")
-	flag.Parse()
-	// Logrus
+func setupLogger() {
 	log.SetOutput(os.Stdout)
 	log.SetReportCaller(true)
-	Formatter := &log.TextFormatter{
+	formatter := &log.TextFormatter{
 		EnvironmentOverrideColors: true,
 		FullTimestamp:             true,
-		TimestampFormat:           "2006-01-02 15:04:05",
+		TimestampFormat:           config.TimeDateFormat,
 		CallerPrettyfier: func(f *runtime.Frame) (string, string) {
-			return fmt.Sprintf("[%s()]", f.Function), ""
+			return fmt.Sprintf("[%d:%s]", f.Line, f.Function), ""
 		},
 	}
-	log.SetFormatter(Formatter)
+	log.SetFormatter(formatter)
 
-	if verboseMode {
-		log.SetLevel(log.DebugLevel)
-		log.Debug("Debug mode is enable!")
-	} else {
-		log.SetLevel(log.InfoLevel)
-	}
+	app.Use(recover.New(recover.Config{}))
+	fmt.Println("Allowed file types as source:", config.Config.AllowedTypes)
+	fmt.Println("Convert to WebP Enabled:", config.Config.EnableWebP)
+	fmt.Println("Convert to AVIF Enabled:", config.Config.EnableAVIF)
+	fmt.Println("Convert to JXL Enabled:", config.Config.EnableJXL)
 }
 
-func switchProxyMode() {
-	// Check for remote address
-	matched, _ := regexp.MatchString(`^https?://`, config.ImgPath)
-	proxyMode = false
-	if matched {
-		proxyMode = true
-	} else {
-		_, err := os.Stat(config.ImgPath)
-		if err != nil {
-			log.Fatalf("Your image path %s is incorrect.Please check and confirm.", config.ImgPath)
-		}
-	}
-}
-
-func main() {
+func init() {
 	// Our banner
 	banner := fmt.Sprintf(`
-▌ ▌   ▌  ▛▀▖ ▞▀▖                ▞▀▖
-▌▖▌▞▀▖▛▀▖▙▄▘ ▚▄ ▞▀▖▙▀▖▌ ▌▞▀▖▙▀▖ ▌▄▖▞▀▖
-▙▚▌▛▀ ▌ ▌▌   ▖ ▌▛▀ ▌  ▐▐ ▛▀ ▌   ▌ ▌▌ ▌
-▘ ▘▝▀▘▀▀ ▘   ▝▀ ▝▀▘▘   ▘ ▝▀▘▘   ▝▀ ▝▀
+		▌ ▌   ▌  ▛▀▖ ▞▀▖                ▞▀▖
+		▌▖▌▞▀▖▛▀▖▙▄▘ ▚▄ ▞▀▖▙▀▖▌ ▌▞▀▖▙▀▖ ▌▄▖▞▀▖
+		▙▚▌▛▀ ▌ ▌▌   ▖ ▌▛▀ ▌  ▐▐ ▛▀ ▌   ▌ ▌▌ ▌
+		▘ ▘▝▀▘▀▀ ▘   ▝▀ ▝▀▘▘   ▘ ▝▀▘▘   ▝▀ ▝▀
+		
+		WebP Server Go - v%s
+		Developed by WebP Server team. https://github.com/webp-sh`, config.Version)
+	// main init is the last one to be called
+	flag.Parse()
+	loglevel := config.Verbosity
 
-Webp Server Go - v%s
-Develop by WebP Server team. https://github.com/webp-sh`, version)
+	// Only enable fiber logger if loglevel is greater than 0
+	if loglevel > 0 {
+		// fiber logger format
+		app.Use(logger.New(logger.Config{
+			Format:     config.FiberLogFormat,
+			TimeFormat: config.TimeDateFormat,
+		}))
+	}
 
-	deferInit()
+	switch loglevel {
+	case 0:
+		log.SetLevel(log.PanicLevel)
+	case 1:
+		log.SetLevel(log.ErrorLevel)
+	case 2:
+		log.SetLevel(log.WarnLevel)
+	case 3:
+		log.SetLevel(log.InfoLevel)
+	case 4:
+		log.SetLevel(log.DebugLevel)
+	}
 	// process cli params
-	if dumpConfig {
-		fmt.Println(sampleConfig)
+	if config.DumpConfig {
+		fmt.Println(config.SampleConfig)
 		os.Exit(0)
 	}
-	if dumpSystemd {
-		fmt.Println(sampleSystemd)
-		os.Exit(0)
-	}
-	if showVersion {
+	if config.ShowVersion {
 		fmt.Printf("\n %c[1;32m%s%c[0m\n\n", 0x1B, banner+"", 0x1B)
 		os.Exit(0)
 	}
-
-	go autoUpdate()
-	config = loadConfig(configPath)
-	switchProxyMode()
-
-	if prefetch {
-		go prefetchImages(config.ImgPath, config.ExhaustPath, config.Quality)
-	}
-
-	app := fiber.New(fiber.Config{
-		ServerHeader:          "Webp-Server-Go",
-		DisableStartupMessage: true,
-	})
-	app.Use(logger.New())
-
-	listenAddress := config.Host + ":" + config.Port
-	app.Get("/*", convert)
-
+	config.LoadConfig()
 	fmt.Printf("\n %c[1;32m%s%c[0m\n\n", 0x1B, banner, 0x1B)
-	fmt.Println("Webp-Server-Go is Running on http://" + listenAddress)
+	setupLogger()
+}
 
-	_ = app.Listen(listenAddress)
+func main() {
+	if config.Config.MaxCacheSize != 0 {
+		go schedule.CleanCache()
+	}
+	if config.Prefetch {
+		go encoder.PrefetchImages()
+	} else if config.PrefetchForeground {
+		// Standalone prefetch, prefetch and exit
+		encoder.PrefetchImages()
+		os.Exit(0)
+	}
+	app.Use(etag.New(etag.Config{
+		Weak: true,
+	}))
 
+	listenAddress := config.Config.Host + ":" + config.Config.Port
+
+	app.Get("/healthz", handler.Healthz)
+	app.Get("/*", handler.Convert)
+
+	fmt.Println("WebP Server Go is Running on http://" + listenAddress)
+
+	bindErr := app.Listen(listenAddress)
+	if bindErr != nil {
+		log.Fatal("Error starting server: ", bindErr)
+	}
 }
